@@ -54,6 +54,30 @@ static BOOL    g_showMouse = FALSE;
 static NOTIFYICONDATA g_nid = {0};
 static HICON   g_trayIcon = NULL;
 
+// --- 补全 GDI+ 缺失的圆角矩形绘制函数 ---
+void DrawRoundRect(Graphics& g, Pen* pen, RectF rect, float radius) {
+    GraphicsPath path;
+    float diameter = radius * 2;
+    path.AddArc(rect.X, rect.Y, diameter, diameter, 180, 90);
+    path.AddArc(rect.X + rect.Width - diameter, rect.Y, diameter, diameter, 270, 90);
+    path.AddArc(rect.X + rect.Width - diameter, rect.Y + rect.Height - diameter, diameter, diameter, 0, 90);
+    path.AddArc(rect.X, rect.Y + rect.Height - diameter, diameter, diameter, 90, 90);
+    path.CloseFigure();
+    g.DrawPath(pen, &path);
+}
+
+void FillRoundRect(Graphics& g, Brush* brush, RectF rect, float radius) {
+    GraphicsPath path;
+    float diameter = radius * 2;
+    path.AddArc(rect.X, rect.Y, diameter, diameter, 180, 90);
+    path.AddArc(rect.X + rect.Width - diameter, rect.Y, diameter, diameter, 270, 90);
+    path.AddArc(rect.X + rect.Width - diameter, rect.Y + rect.Height - diameter, diameter, diameter, 0, 90);
+    path.AddArc(rect.X, rect.Y + rect.Height - diameter, diameter, diameter, 90, 90);
+    path.CloseFigure();
+    g.FillPath(brush, &path);
+}
+// -----------------------------------------
+
 // 绘制苹果风图标
 void DrawMacIcon(Graphics& g, int type, RectF rect, Color color) {
     Pen pen(color, 1.5f);
@@ -106,16 +130,16 @@ void draw_toolbar(Graphics& g) {
     RectF bgRect((float)startX, (float)startY, (float)totalW, 56.0f);
     
     SolidBrush bgBrush(Color(220, 30, 30, 30));
-    g.FillRoundRectangle(&bgBrush, bgRect, 28.0f, 28.0f);
+    FillRoundRect(g, &bgBrush, bgRect, 28.0f); // 修复调用
     Pen borderPen(Color(40, 255, 255, 255), 1.0f);
-    g.DrawRoundRectangle(&borderPen, bgRect, 28.0f, 28.0f);
+    DrawRoundRect(g, &borderPen, bgRect, 28.0f); // 修复调用
 
     for (int i = 0; i < (int)BTN_COUNT; i++) {
         RectF btnRect((float)(startX + 16 + i * (BTN_SIZE + BTN_GAP)), (float)(startY + 10), (float)BTN_SIZE, (float)BTN_SIZE);
         
         if (i == g_hoverBtn) {
             SolidBrush hoverBrush(Color(40, 255, 255, 255));
-            g.FillRoundRectangle(&hoverBrush, btnRect, 8.0f, 8.0f);
+            FillRoundRect(g, &hoverBrush, btnRect, 8.0f); // 修复调用
         }
 
         Color iconColor;
@@ -372,7 +396,6 @@ void begin_capture() {
     g_staticBmp = CreateCompatibleBitmap(hScreen, g_screenW, g_screenH);
     SelectObject(g_staticDC, g_staticBmp);
     
-    // 创建一次用于放大镜的 GDI+ 位图对象，防止每次重绘都创建导致内存泄漏
     g_screenGpBmp = Bitmap::FromHBITMAP(g_screenBmp, NULL);
 
     ReleaseDC(NULL, hScreen);
