@@ -1,3 +1,15 @@
+/* ======================================================================
+ * 1. 项目名称 / 文件名称：极简截图 / shot.cpp
+ * 2. 文件版本 / 开发语言：v2.0 稳定版 / C++ (Win32 API + GDI+)
+ * 3. 备注说明：基于原生接口开发的极简截图工具。支持区域/全屏选区、
+ *              矩形/圆形/箭头/文字标注、颜色切换。纯Unicode硬编码
+ *              彻底杜绝乱码；去除看门狗机制，拒绝流氓驻留。
+ * 4. 架构角色：单体独立桌面应用 (Standalone Desktop App)
+ * 5. 参与成员（含时间维度）：DS（执行落地）；Dili（终审）
+ * 6. 更新时间：2026-10-29
+ * 7. 审批状态：审核通过 (Approved)
+ * ====================================================================== */
+
 #define NOMINMAX
 #include <windows.h>
 #include <windowsx.h>
@@ -80,50 +92,43 @@ static HICON   g_trayIcon = NULL;
 // 物理防乱码：纯 16 进制 UTF-16 字符集
 static const wchar_t W_ABOUT[] = { 0x5173, 0x4E8E, 0x0000 }; 
 static const wchar_t W_EXIT[] = { 0x9000, 0x51FA, 0x0000 }; 
+// 极简截图 (Ctrl+Shift+4)
 static const wchar_t W_TIP[] = { 0x6781, 0x7B80, 0x622A, 0x56FE, 0x0020, 0x0028, 0x0043, 0x0074, 0x0072, 0x006C, 0x002B, 0x0053, 0x0068, 0x0069, 0x0066, 0x0074, 0x002B, 0x0034, 0x0029, 0x0000 }; 
 static const wchar_t W_INFO_TITLE[] = { 0x6781, 0x7B80, 0x622A, 0x56FE, 0x5DF2, 0x542F, 0x52A8, 0x0000 }; 
 static const wchar_t W_INFO_TEXT[] = { 0x6309, 0x0020, 0x0043, 0x0074, 0x0072, 0x006C, 0x002B, 0x0053, 0x0068, 0x0069, 0x0066, 0x0074, 0x002B, 0x0034, 0x0020, 0x622A, 0x56FE, 0x000A, 0x53F3, 0x952E, 0x56FE, 0x6807, 0x53EF, 0x9000, 0x51FA, 0x0000 }; 
 static const wchar_t W_ABOUT_TEXT[] = { 0x6781, 0x7B80, 0x622A, 0x56FE, 0x0020, 0x0062, 0x0079, 0x0020, 0x007A, 0x0073, 0x0044, 0x0069, 0x006C, 0x0069, 0x0000 }; 
 
-// ================= 更新：还原图片的靶心图标 =================
+// ================= 靶心图标 (纯黑线条，完全透明背景) =================
 HICON CreateTargetIcon(int size, Color color) {
     Bitmap bmp(size, size, PixelFormat32bppARGB);
     Graphics g(&bmp);
     g.SetSmoothingMode(SmoothingModeAntiAlias);
-    g.Clear(Color(0, 0, 0, 0)); // 完全透明背景
+    g.Clear(Color(0, 0, 0, 0));
 
-    // 线宽随尺寸自适应，32px 时约为 2px 左右
     float penWidth = size * 0.065f;
     Pen pen(color, penWidth);
     pen.SetStartCap(LineCapRound);
     pen.SetEndCap(LineCapRound);
 
     float c = size / 2.0f;
-    float r_out = size * 0.38f; // 大圆半径
-    float r_in = size * 0.15f;  // 小圆半径
-    float line_out = size * 0.1f; // 十字线外延长度
-    float line_in = size * 0.05f; // 十字线内缩长度(穿过大圆，不碰小圆)
+    float r_out = size * 0.38f;
+    float r_in = size * 0.15f;
+    float line_out = size * 0.1f;
+    float line_in = size * 0.05f;
 
-    // 画大圆
     g.DrawEllipse(&pen, c - r_out, c - r_out, r_out * 2, r_out * 2);
-    // 画小圆
     g.DrawEllipse(&pen, c - r_in, c - r_in, r_in * 2, r_in * 2);
 
-    // 画四个方向的线
-    // 上
     g.DrawLine(&pen, c, c - r_out - line_out, c, c - r_in - line_in);
-    // 下
     g.DrawLine(&pen, c, c + r_out + line_out, c, c + r_in + line_in);
-    // 左
     g.DrawLine(&pen, c - r_out - line_out, c, c - r_in - line_in, c);
-    // 右
     g.DrawLine(&pen, c + r_out + line_out, c, c + r_in + line_in, c);
 
     HICON hIcon;
     bmp.GetHICON(&hIcon);
     return hIcon;
 }
-// =========================================================
+// ====================================================================
 
 void DrawRoundRect(Graphics& g, Pen* pen, RectF rect, float radius) {
     GraphicsPath path;
@@ -377,7 +382,6 @@ void paint_edit(HWND hwnd) {
         draw_toolbar(g);
     }
 
-    // 准星与放大镜
     if (g_showMouse && !g_textBox) {
         int magSize = 100;
         int magX = g_mouseX + 30;
@@ -635,7 +639,7 @@ void begin_capture() {
 }
 
 void init_tray(HWND hwnd) {
-    // 托盘使用黑色线条的透明图标
+    // 托盘使用和 APP 完全一样的靶心透明图标
     g_trayIcon = CreateTargetIcon(32, Color(255, 0, 0, 0));
     g_nid.cbSize = sizeof(NOTIFYICONDATAW); g_nid.hWnd = hwnd; g_nid.uID = 1;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_INFO;
@@ -659,11 +663,13 @@ LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         SetForegroundWindow(hwnd);
         int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
         DestroyMenu(hMenu);
-        if (cmd == 1001) MessageBoxW(NULL, W_ABOUT_TEXT, W_ABOUT, MB_OK | MB_ICONINFORMATION);
-        else if (cmd == 1002) {
-            HANDLE hEvent = OpenEventA(EVENT_MODIFY_STATE, FALSE, "TinyShotQuitEvent");
-            if (hEvent) { SetEvent(hEvent); CloseHandle(hEvent); }
-            Shell_NotifyIconW(NIM_DELETE, &g_nid); DestroyIcon(g_trayIcon);
+        
+        if (cmd == 1001) {
+            MessageBoxW(NULL, W_ABOUT_TEXT, W_ABOUT, MB_OK | MB_ICONINFORMATION);
+        } else if (cmd == 1002) {
+            // 彻底退出，不耍流氓，不走看门狗复活
+            Shell_NotifyIconW(NIM_DELETE, &g_nid); 
+            DestroyIcon(g_trayIcon);
             PostQuitMessage(0);
         }
         return 0;
@@ -675,79 +681,59 @@ void set_auto_start() {
     HKEY hKey;
     if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
         char path[MAX_PATH]; GetModuleFileNameA(NULL, path, MAX_PATH);
-        RegSetValueExA(hKey, "TinyShot", 0, REG_SZ, (const BYTE*)path, (DWORD)(lstrlenA(path) + 1));
+        // 开机启动项名称标识修改为 JiJianJieTu
+        RegSetValueExA(hKey, "JiJianJieTu", 0, REG_SZ, (const BYTE*)path, (DWORD)(lstrlenA(path) + 1));
         RegCloseKey(hKey);
     }
 }
 
 LONG WINAPI TopLevelFilter(EXCEPTION_POINTERS* p) {
-    char path[MAX_PATH]; GetTempPathA(MAX_PATH, path); lstrcatA(path, "tinyshot_crash.log");
+    char path[MAX_PATH]; GetTempPathA(MAX_PATH, path); lstrcatA(path, "JiJianJieTu_crash.log");
     HANDLE h = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
     if (h != INVALID_HANDLE_VALUE) { DWORD wr; WriteFile(h, "Crash", 5, &wr, NULL); CloseHandle(h); }
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
-int watchdog_main() {
-    char self[MAX_PATH]; GetModuleFileNameA(NULL, self, MAX_PATH);
-    SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
-    HANDLE hQuitEvent = CreateEventA(NULL, TRUE, FALSE, "TinyShotQuitEvent");
-    for (;;) {
-        char cmd[MAX_PATH + 32]; wsprintfA(cmd, "\"%s\" --noguard", self);
-        STARTUPINFOA si = { sizeof(si) }; si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
-        PROCESS_INFORMATION pi = {0};
-        if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-            WaitForSingleObject(pi.hProcess, INFINITE);
-            CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-            if (WaitForSingleObject(hQuitEvent, 0) == WAIT_OBJECT_0) break;
-            Sleep(1500);
-        } else Sleep(5000);
-    }
-    CloseHandle(hQuitEvent); return 0;
-}
-
-void start_watchdog() {
-    char self[MAX_PATH]; GetModuleFileNameA(NULL, self, MAX_PATH);
-    char cmd[MAX_PATH + 32]; wsprintfA(cmd, "\"%s\" --watchdog", self);
-    STARTUPINFOA si = { sizeof(si) }; si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi = {0};
-    if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-    }
-}
-
 static int run_message_loop() {
     MSG msg;
-    __try { while (GetMessageA(&msg, NULL, 0, 0)) { TranslateMessage(&msg); DispatchMessageA(&msg); } }
-    __except (EXCEPTION_EXECUTE_HANDLER) { return 1; }
+    __try { 
+        while (GetMessageA(&msg, NULL, 0, 0)) { 
+            TranslateMessage(&msg); 
+            DispatchMessageA(&msg); 
+        } 
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) { 
+        return 1; 
+    }
     return 0;
 }
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow) {
-    if (cmdLine && strstr(cmdLine, "--watchdog")) return watchdog_main();
     SetUnhandledExceptionFilter(TopLevelFilter);
-    HANDLE hMutex = CreateMutexA(NULL, TRUE, "TinyShotMutex_v7");
+    
+    // Mutex 名称标识
+    HANDLE hMutex = CreateMutexA(NULL, TRUE, "JiJianJieTuMutex_v1");
     if (hMutex && GetLastError() == ERROR_ALREADY_EXISTS) { CloseHandle(hMutex); return 0; }
-    if (!cmdLine || !strstr(cmdLine, "--noguard")) start_watchdog();
     
     GdiplusStartupInput gdiSI;
     if (GdiplusStartup(&g_gdiplusToken, &gdiSI, NULL) != Ok) return 1;
     set_auto_start();
 
-    WNDCLASSA wc = {0}; wc.lpfnWndProc = MsgWndProc; wc.hInstance = hInst; wc.lpszClassName = "TinyShotMsgCls";
+    WNDCLASSA wc = {0}; wc.lpfnWndProc = MsgWndProc; wc.hInstance = hInst; wc.lpszClassName = "JiJianJieTuMsgCls";
     RegisterClassA(&wc);
     WNDCLASSA we = {0}; we.lpfnWndProc = EditWndProc; we.hInstance = hInst; we.hCursor = LoadCursor(NULL, IDC_ARROW); 
     we.lpszClassName = "ShotEditCls"; we.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     RegisterClassA(&we);
 
-    g_msgWnd = CreateWindowExA(0, "TinyShotMsgCls", "", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, hInst, NULL);
+    // 窗口名设为“极简截图”
+    g_msgWnd = CreateWindowExA(0, "JiJianJieTuMsgCls", "JiJianJieTu", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, hInst, NULL);
     if (!g_msgWnd) { GdiplusShutdown(g_gdiplusToken); return 1; }
 
-    // ================= 设置任务栏和窗口图标 =================
+    // 设置任务栏和窗口图标
     HICON appIconLarge = CreateTargetIcon(32, Color(255, 0, 0, 0));
     HICON appIconSmall = CreateTargetIcon(16, Color(255, 0, 0, 0));
     SendMessage(g_msgWnd, WM_SETICON, ICON_BIG, (LPARAM)appIconLarge);
     SendMessage(g_msgWnd, WM_SETICON, ICON_SMALL, (LPARAM)appIconSmall);
-    // ========================================================
 
     if (!RegisterHotKey(g_msgWnd, HOTKEY_ID, MOD_CONTROL | MOD_SHIFT, '4')) {
         MessageBoxW(NULL, L"Ctrl+Shift+4 register failed.", L"TinyShot", MB_ICONERROR);
@@ -757,7 +743,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow) {
     init_tray(g_msgWnd);
     run_message_loop();
     
-    UnregisterHotKey(g_msgWnd, HOTKEY_ID); GdiplusShutdown(g_gdiplusToken);
+    UnregisterHotKey(g_msgWnd, HOTKEY_ID); 
+    GdiplusShutdown(g_gdiplusToken);
     if (hMutex) CloseHandle(hMutex);
     return 0;
 }
