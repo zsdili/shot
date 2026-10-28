@@ -51,8 +51,23 @@ static int     g_hoverBtn = -1;
 
 static int     g_mouseX = 0, g_mouseY = 0;
 static BOOL    g_showMouse = FALSE;
-static NOTIFYICONDATAW g_nid = {0}; // 强制使用宽字符版本
+static NOTIFYICONDATAW g_nid = {0};
 static HICON   g_trayIcon = NULL;
+
+// ================= 物理防乱码：纯 16 进制 UTF-16 字符集 =================
+// 关于
+static const wchar_t W_ABOUT[] = { 0x5173, 0x4E8E, 0x0000 }; 
+// 退出
+static const wchar_t W_EXIT[] = { 0x9000, 0x51FA, 0x0000 }; 
+// 极简截图 (Ctrl+Shift+4)
+static const wchar_t W_TIP[] = { 0x6781, 0x7B80, 0x622A, 0x56FE, 0x0020, 0x0028, 0x0043, 0x0074, 0x0072, 0x006C, 0x002B, 0x0053, 0x0068, 0x0069, 0x0066, 0x0074, 0x002B, 0x0034, 0x0029, 0x0000 }; 
+// 极简截图已启动
+static const wchar_t W_INFO_TITLE[] = { 0x6781, 0x7B80, 0x622A, 0x56FE, 0x5DF2, 0x542F, 0x52A8, 0x0000 }; 
+// 按 Ctrl+Shift+4 截图 \n 右键图标可退出
+static const wchar_t W_INFO_TEXT[] = { 0x6309, 0x0020, 0x0043, 0x0074, 0x0072, 0x006C, 0x002B, 0x0053, 0x0068, 0x0069, 0x0066, 0x0074, 0x002B, 0x0034, 0x0020, 0x622A, 0x56FE, 0x000A, 0x53F3, 0x952E, 0x56FE, 0x6807, 0x53EF, 0x9000, 0x51FA, 0x0000 }; 
+// 极简截图 by zsDili
+static const wchar_t W_ABOUT_TEXT[] = { 0x6781, 0x7B80, 0x622A, 0x56FE, 0x0020, 0x0062, 0x0079, 0x0020, 0x007A, 0x0073, 0x0044, 0x0069, 0x006C, 0x0069, 0x0000 }; 
+// ========================================================================
 
 void DrawRoundRect(Graphics& g, Pen* pen, RectF rect, float radius) {
     GraphicsPath path;
@@ -439,11 +454,11 @@ void init_tray(HWND hwnd) {
     g_nid.uCallbackMessage = WM_TRAYICON; 
     g_nid.hIcon = g_trayIcon;
     
-    // 强制使用 Unicode 字符串与 API
-    wcscpy_s(g_nid.szTip, L"\u6781\u7b80\u622a\u56fe (Ctrl+Shift+4)");
+    // 使用完全硬编码的字符数组，物理防乱码
+    wcscpy_s(g_nid.szTip, W_TIP);
     g_nid.dwInfoFlags = NIIF_INFO;
-    wcscpy_s(g_nid.szInfoTitle, L"\u6781\u7b80\u622a\u56fe\u5df2\u542f\u52a8");
-    wcscpy_s(g_nid.szInfo, L"\u6309 Ctrl+Shift+4 \u622a\u56fe\n\u53f3\u952e\u56fe\u6807\u53ef\u9000\u51fa");
+    wcscpy_s(g_nid.szInfoTitle, W_INFO_TITLE);
+    wcscpy_s(g_nid.szInfo, W_INFO_TEXT);
     
     Shell_NotifyIconW(NIM_ADD, &g_nid);
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
@@ -455,16 +470,16 @@ LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         POINT pt; GetCursorPos(&pt);
         HMENU hMenu = CreatePopupMenu();
         
-        AppendMenuW(hMenu, MF_STRING, 1001, L"\u5173\u4e8e");
+        AppendMenuW(hMenu, MF_STRING, 1001, W_ABOUT);
         AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
-        AppendMenuW(hMenu, MF_STRING, 1002, L"\u9000\u51fa");
+        AppendMenuW(hMenu, MF_STRING, 1002, W_EXIT);
         
         SetForegroundWindow(hwnd);
         int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
         DestroyMenu(hMenu);
         
         if (cmd == 1001) {
-            MessageBoxW(NULL, L"\u6781\u7b80\u622a\u56fe by zsDili", L"\u5173\u4e8e", MB_OK | MB_ICONINFORMATION);
+            MessageBoxW(NULL, W_ABOUT_TEXT, W_ABOUT, MB_OK | MB_ICONINFORMATION);
         } else if (cmd == 1002) {
             HANDLE hEvent = OpenEventA(EVENT_MODIFY_STATE, FALSE, "TinyShotQuitEvent");
             if (hEvent) { SetEvent(hEvent); CloseHandle(hEvent); }
