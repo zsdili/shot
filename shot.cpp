@@ -35,7 +35,7 @@ static HBITMAP g_screenBmp = NULL;
 static HDC     g_screenDC  = NULL;
 static HBITMAP g_staticBmp = NULL;
 static HDC     g_staticDC  = NULL;
-static Bitmap* g_screenGpBmp = NULL; // 缓存用于放大镜的 GDI+ 位图，防泄漏
+static Bitmap* g_screenGpBmp = NULL; 
 static int     g_screenW = 0, g_screenH = 0;
 
 static Shape   g_shapes[MAX_SHAPES];
@@ -51,10 +51,9 @@ static int     g_hoverBtn = -1;
 
 static int     g_mouseX = 0, g_mouseY = 0;
 static BOOL    g_showMouse = FALSE;
-static NOTIFYICONDATA g_nid = {0};
+static NOTIFYICONDATAW g_nid = {0}; // 强制使用宽字符版本
 static HICON   g_trayIcon = NULL;
 
-// --- 补全 GDI+ 缺失的圆角矩形绘制函数 ---
 void DrawRoundRect(Graphics& g, Pen* pen, RectF rect, float radius) {
     GraphicsPath path;
     float diameter = radius * 2;
@@ -76,9 +75,7 @@ void FillRoundRect(Graphics& g, Brush* brush, RectF rect, float radius) {
     path.CloseFigure();
     g.FillPath(brush, &path);
 }
-// -----------------------------------------
 
-// 绘制苹果风图标
 void DrawMacIcon(Graphics& g, int type, RectF rect, Color color) {
     Pen pen(color, 1.5f);
     pen.SetStartCap(LineCapRound);
@@ -121,7 +118,6 @@ void DrawMacIcon(Graphics& g, int type, RectF rect, Color color) {
     }
 }
 
-// 底部居中工具栏
 void draw_toolbar(Graphics& g) {
     int totalW = BTN_COUNT * BTN_SIZE + (BTN_COUNT - 1) * BTN_GAP + 32;
     int startX = (g_screenW - totalW) / 2;
@@ -130,16 +126,16 @@ void draw_toolbar(Graphics& g) {
     RectF bgRect((float)startX, (float)startY, (float)totalW, 56.0f);
     
     SolidBrush bgBrush(Color(220, 30, 30, 30));
-    FillRoundRect(g, &bgBrush, bgRect, 28.0f); // 修复调用
+    FillRoundRect(g, &bgBrush, bgRect, 28.0f); 
     Pen borderPen(Color(40, 255, 255, 255), 1.0f);
-    DrawRoundRect(g, &borderPen, bgRect, 28.0f); // 修复调用
+    DrawRoundRect(g, &borderPen, bgRect, 28.0f); 
 
     for (int i = 0; i < (int)BTN_COUNT; i++) {
         RectF btnRect((float)(startX + 16 + i * (BTN_SIZE + BTN_GAP)), (float)(startY + 10), (float)BTN_SIZE, (float)BTN_SIZE);
         
         if (i == g_hoverBtn) {
             SolidBrush hoverBrush(Color(40, 255, 255, 255));
-            FillRoundRect(g, &hoverBrush, btnRect, 8.0f); // 修复调用
+            FillRoundRect(g, &hoverBrush, btnRect, 8.0f); 
         }
 
         Color iconColor;
@@ -436,14 +432,20 @@ HICON CreateTargetIcon(int size, Color color) {
 
 void init_tray(HWND hwnd) {
     g_trayIcon = CreateTargetIcon(32, Color(255, 255, 80, 80));
-    g_nid.cbSize = sizeof(NOTIFYICONDATA); g_nid.hWnd = hwnd; g_nid.uID = 1;
+    g_nid.cbSize = sizeof(NOTIFYICONDATAW); 
+    g_nid.hWnd = hwnd; 
+    g_nid.uID = 1;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_INFO;
-    g_nid.uCallbackMessage = WM_TRAYICON; g_nid.hIcon = g_trayIcon;
-    lstrcpy(g_nid.szTip, "极简截图 (Ctrl+Shift+4)");
+    g_nid.uCallbackMessage = WM_TRAYICON; 
+    g_nid.hIcon = g_trayIcon;
+    
+    // 强制使用 Unicode 字符串与 API
+    wcscpy_s(g_nid.szTip, L"\u6781\u7b80\u622a\u56fe (Ctrl+Shift+4)");
     g_nid.dwInfoFlags = NIIF_INFO;
-    lstrcpy(g_nid.szInfoTitle, "极简截图已启动");
-    lstrcpy(g_nid.szInfo, "按 Ctrl+Shift+4 截图\n右键图标可退出");
-    Shell_NotifyIcon(NIM_ADD, &g_nid);
+    wcscpy_s(g_nid.szInfoTitle, L"\u6781\u7b80\u622a\u56fe\u5df2\u542f\u52a8");
+    wcscpy_s(g_nid.szInfo, L"\u6309 Ctrl+Shift+4 \u622a\u56fe\n\u53f3\u952e\u56fe\u6807\u53ef\u9000\u51fa");
+    
+    Shell_NotifyIconW(NIM_ADD, &g_nid);
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 }
 
@@ -452,17 +454,22 @@ LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == WM_TRAYICON && lParam == WM_RBUTTONUP) {
         POINT pt; GetCursorPos(&pt);
         HMENU hMenu = CreatePopupMenu();
-        AppendMenuA(hMenu, MF_STRING, 1001, "关于");
-        AppendMenuA(hMenu, MF_SEPARATOR, 0, NULL);
-        AppendMenuA(hMenu, MF_STRING, 1002, "退出");
+        
+        AppendMenuW(hMenu, MF_STRING, 1001, L"\u5173\u4e8e");
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(hMenu, MF_STRING, 1002, L"\u9000\u51fa");
+        
         SetForegroundWindow(hwnd);
         int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
         DestroyMenu(hMenu);
-        if (cmd == 1001) MessageBoxA(NULL, "极简截图 by zsDili", "关于", MB_OK | MB_ICONINFORMATION);
-        else if (cmd == 1002) {
+        
+        if (cmd == 1001) {
+            MessageBoxW(NULL, L"\u6781\u7b80\u622a\u56fe by zsDili", L"\u5173\u4e8e", MB_OK | MB_ICONINFORMATION);
+        } else if (cmd == 1002) {
             HANDLE hEvent = OpenEventA(EVENT_MODIFY_STATE, FALSE, "TinyShotQuitEvent");
             if (hEvent) { SetEvent(hEvent); CloseHandle(hEvent); }
-            Shell_NotifyIcon(NIM_DELETE, &g_nid); DestroyIcon(g_trayIcon);
+            Shell_NotifyIconW(NIM_DELETE, &g_nid); 
+            DestroyIcon(g_trayIcon);
             PostQuitMessage(0);
         }
         return 0;
@@ -542,7 +549,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow) {
     if (!g_msgWnd) { GdiplusShutdown(g_gdiplusToken); return 1; }
 
     if (!RegisterHotKey(g_msgWnd, HOTKEY_ID, MOD_CONTROL | MOD_SHIFT, '4')) {
-        MessageBoxA(NULL, "Ctrl+Shift+4 register failed.", "TinyShot", MB_ICONERROR);
+        MessageBoxW(NULL, L"Ctrl+Shift+4 register failed.", L"TinyShot", MB_ICONERROR);
         GdiplusShutdown(g_gdiplusToken); return 1;
     }
 
