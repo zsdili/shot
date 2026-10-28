@@ -1,0 +1,33 @@
+name: Build TinyShot
+
+on:
+  push:
+    branches: [ main ]  # 当你推送到 main 分支时触发
+  workflow_dispatch:      # 也允许你手动在 Actions 页面点击按钮触发
+
+jobs:
+  build:
+    runs-on: windows-latest  # 使用 GitHub 提供的 Windows 服务器
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4  # 拉取你的仓库代码
+
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1  # 配置 MSVC 编译环境，让 cl.exe 可用
+      with:
+        arch: x64  # 编译为 64 位程序
+
+    - name: Compile with cl.exe
+      shell: cmd
+      run: |
+        cl /O2 /MD /EHsc /D_CRT_SECURE_NO_WARNINGS shot.cpp ^
+           /link /SUBSYSTEM:WINDOWS ^
+           user32.lib gdi32.lib gdiplus.lib shell32.lib advapi32.lib
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: TinyShot-exe
+        path: shot.exe  # 编译产物在根目录
+        retention-days: 7  # 构建产物保留 7 天，可自行调整
