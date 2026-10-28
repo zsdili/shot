@@ -1,6 +1,6 @@
 /* ======================================================================
  * 1. 项目名称 / 文件名称：极简截图 / shot.cpp
- * 2. 文件版本 / 开发语言：v2.1 稳定版 / C++ (Win32 API + GDI+)
+ * 2. 文件版本 / 开发语言：v2.2 稳定版 / C++ (Win32 API + GDI+)
  * 3. 备注说明：基于原生接口开发的极简截图工具。支持区域/全屏选区、
  *              矩形/圆形/箭头/文字标注、颜色切换。纯Unicode硬编码
  *              彻底杜绝乱码；去除看门狗机制，拒绝流氓驻留。
@@ -16,6 +16,7 @@
 #include <gdiplus.h>
 #include <gdipluspath.h>
 #include <shlobj.h>
+#include <commctrl.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +29,7 @@
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "comctl32.lib")
 
 using namespace Gdiplus;
 
@@ -510,9 +512,12 @@ LRESULT CALLBACK EditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             g_textBox = CreateWindowExW(WS_EX_TOPMOST, L"EDIT", L"", 
                 WS_POPUP | WS_BORDER | ES_LEFT | ES_AUTOHSCROLL, 
                 x, y, 250, 30, hwnd, NULL, (HINSTANCE)GetWindowLongPtr(hwnd, GWLP_HINSTANCE), NULL);
-            SendMessage(g_textBox, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
-            ShowWindow(g_textBox, SW_SHOW);
-            SetFocus(g_textBox);
+            if (g_textBox) {
+                SetWindowSubclass(g_textBox, TextBoxProc, 1, 0); // 绑定子类化，处理回车事件
+                SendMessage(g_textBox, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
+                ShowWindow(g_textBox, SW_SHOW);
+                SetFocus(g_textBox);
+            }
             return 0;
         }
 
