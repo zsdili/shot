@@ -1,6 +1,6 @@
 /* ======================================================================
  * 1. 项目名称 / 文件名称：极简截图 / shot.cpp
- * 2. 文件版本 / 开发语言：v2.0 稳定版 / C++ (Win32 API + GDI+)
+ * 2. 文件版本 / 开发语言：v2.1 稳定版 / C++ (Win32 API + GDI+)
  * 3. 备注说明：基于原生接口开发的极简截图工具。支持区域/全屏选区、
  *              矩形/圆形/箭头/文字标注、颜色切换。纯Unicode硬编码
  *              彻底杜绝乱码；去除看门狗机制，拒绝流氓驻留。
@@ -176,20 +176,20 @@ void DrawMacIcon(Graphics& g, int type, RectF rect, Color color) {
     case TOOL_LINE:
         g.DrawLine(&pen, cx - s, cy + s, cx + s, cy - s); 
         break;
-    case TOOL_TEXT:
+    case TOOL_TEXT: {
         FontFamily ff(L"Segoe UI");
         Font font(&ff, 14, FontStyleRegular, UnitPixel);
         SolidBrush brush(color);
         g.DrawString(L"T", -1, &font, PointF(cx - 6, cy - 9), &brush);
         break;
-    case TOOL_COLOR:
-        {
-            SolidBrush cBrush(g_colors[g_colorIdx]);
-            g.FillEllipse(&cBrush, cx - s, cy - s, s*2, s*2);
-            Pen border(Color(255,255,255,255), 1.0f);
-            g.DrawEllipse(&border, cx - s, cy - s, s*2, s*2);
-        }
+    }
+    case TOOL_COLOR: {
+        SolidBrush cBrush(g_colors[g_colorIdx]);
+        g.FillEllipse(&cBrush, cx - s, cy - s, s*2, s*2);
+        Pen border(Color(255,255,255,255), 1.0f);
+        g.DrawEllipse(&border, cx - s, cy - s, s*2, s*2);
         break;
+    }
     case TOOL_UNDO: {
         g.DrawArc(&pen, cx - s, cy - s*0.6f, s*1.8f, s*1.8f, 180.0f, 270.0f);
         PointF pts[] = { PointF(cx - s, cy + s*0.2f), PointF(cx - s, cy - s*0.4f), PointF(cx - s*0.4f, cy + s*0.2f) };
@@ -590,7 +590,7 @@ LRESULT CALLBACK TextBoxProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, 
             ScreenToClient(g_editWnd, &pt);
 
             g_shapes[g_shapeCount].type = TOOL_TEXT;
-            g_shapes[g_shapeCount].a = pt;
+            g_shapes[g_shapeCount].a = Point(pt.x, pt.y);
             g_shapes[g_shapeCount].color = g_colors[g_colorIdx];
             wcscpy_s(g_shapes[g_shapeCount].text, text);
             g_shapeCount++; update_static_layer();
@@ -639,7 +639,6 @@ void begin_capture() {
 }
 
 void init_tray(HWND hwnd) {
-    // 托盘使用和 APP 完全一样的靶心透明图标
     g_trayIcon = CreateTargetIcon(32, Color(255, 0, 0, 0));
     g_nid.cbSize = sizeof(NOTIFYICONDATAW); g_nid.hWnd = hwnd; g_nid.uID = 1;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_INFO;
@@ -667,7 +666,6 @@ LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (cmd == 1001) {
             MessageBoxW(NULL, W_ABOUT_TEXT, W_ABOUT, MB_OK | MB_ICONINFORMATION);
         } else if (cmd == 1002) {
-            // 彻底退出，不耍流氓，不走看门狗复活
             Shell_NotifyIconW(NIM_DELETE, &g_nid); 
             DestroyIcon(g_trayIcon);
             PostQuitMessage(0);
@@ -681,7 +679,6 @@ void set_auto_start() {
     HKEY hKey;
     if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
         char path[MAX_PATH]; GetModuleFileNameA(NULL, path, MAX_PATH);
-        // 开机启动项名称标识修改为 JiJianJieTu
         RegSetValueExA(hKey, "JiJianJieTu", 0, REG_SZ, (const BYTE*)path, (DWORD)(lstrlenA(path) + 1));
         RegCloseKey(hKey);
     }
@@ -711,7 +708,6 @@ static int run_message_loop() {
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow) {
     SetUnhandledExceptionFilter(TopLevelFilter);
     
-    // Mutex 名称标识
     HANDLE hMutex = CreateMutexA(NULL, TRUE, "JiJianJieTuMutex_v1");
     if (hMutex && GetLastError() == ERROR_ALREADY_EXISTS) { CloseHandle(hMutex); return 0; }
     
@@ -725,11 +721,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow) {
     we.lpszClassName = "ShotEditCls"; we.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     RegisterClassA(&we);
 
-    // 窗口名设为“极简截图”
     g_msgWnd = CreateWindowExA(0, "JiJianJieTuMsgCls", "JiJianJieTu", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, hInst, NULL);
     if (!g_msgWnd) { GdiplusShutdown(g_gdiplusToken); return 1; }
 
-    // 设置任务栏和窗口图标
     HICON appIconLarge = CreateTargetIcon(32, Color(255, 0, 0, 0));
     HICON appIconSmall = CreateTargetIcon(16, Color(255, 0, 0, 0));
     SendMessage(g_msgWnd, WM_SETICON, ICON_BIG, (LPARAM)appIconLarge);
