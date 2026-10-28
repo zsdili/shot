@@ -23,13 +23,29 @@ using namespace Gdiplus;
 #define WM_TRAYICON   (WM_APP + 1)
 #define MAX_SHAPES    512
 #define BTN_SIZE      36
-#define BTN_GAP       12
+#define BTN_GAP       10
 
-enum { TOOL_ARROW = 0, TOOL_RECT, TOOL_ELLIPSE, TOOL_LINE, TOOL_UNDO, TOOL_SAVE, TOOL_CANCEL };
+enum { TOOL_ARROW = 0, TOOL_RECT, TOOL_ELLIPSE, TOOL_LINE, TOOL_TEXT, TOOL_COLOR, TOOL_UNDO, TOOL_SAVE, TOOL_CANCEL };
 
-struct Shape { int type; Point a, b; };
-static const int g_btns[] = { TOOL_ARROW, TOOL_RECT, TOOL_ELLIPSE, TOOL_LINE, TOOL_UNDO, TOOL_SAVE, TOOL_CANCEL };
+struct Shape { 
+    int type; 
+    Point a, b; 
+    Color color; 
+    WCHAR text[256];
+};
+
+static const int g_btns[] = { TOOL_ARROW, TOOL_RECT, TOOL_ELLIPSE, TOOL_LINE, TOOL_TEXT, TOOL_COLOR, TOOL_UNDO, TOOL_SAVE, TOOL_CANCEL };
 #define BTN_COUNT (sizeof(g_btns) / sizeof(g_btns[0]))
+
+static Color g_colors[] = { 
+    Color(255, 255, 60, 60),   // 红
+    Color(255, 60, 160, 255),  // 蓝
+    Color(255, 60, 220, 60),   // 绿
+    Color(255, 255, 220, 60),  // 黄
+    Color(255, 255, 255, 255), // 白
+    Color(255, 30, 30, 30)     // 黑
+};
+static int g_colorIdx = 0;
 
 static HBITMAP g_screenBmp = NULL;
 static HDC     g_screenDC  = NULL;
@@ -45,29 +61,69 @@ static BOOL    g_dragging = FALSE;
 static Point   g_dragStart, g_dragEnd;
 static HWND    g_msgWnd  = NULL;
 static HWND    g_editWnd = NULL;
+static HWND    g_textBox = NULL;
 static ULONG_PTR g_gdiplusToken = 0;
 static BOOL    g_saving = FALSE;
 static int     g_hoverBtn = -1;
+
+// 选区状态
+static BOOL    g_isSelecting = FALSE;
+static BOOL    g_hasSelection = FALSE;
+static Point   g_selStart, g_selEnd;
+static RECT    g_selRect = {0, 0, 0, 0};
 
 static int     g_mouseX = 0, g_mouseY = 0;
 static BOOL    g_showMouse = FALSE;
 static NOTIFYICONDATAW g_nid = {0};
 static HICON   g_trayIcon = NULL;
 
-// ================= 物理防乱码：纯 16 进制 UTF-16 字符集 =================
-// 关于
+// 物理防乱码：纯 16 进制 UTF-16 字符集
 static const wchar_t W_ABOUT[] = { 0x5173, 0x4E8E, 0x0000 }; 
-// 退出
 static const wchar_t W_EXIT[] = { 0x9000, 0x51FA, 0x0000 }; 
-// 极简截图 (Ctrl+Shift+4)
 static const wchar_t W_TIP[] = { 0x6781, 0x7B80, 0x622A, 0x56FE, 0x0020, 0x0028, 0x0043, 0x0074, 0x0072, 0x006C, 0x002B, 0x0053, 0x0068, 0x0069, 0x0066, 0x0074, 0x002B, 0x0034, 0x0029, 0x0000 }; 
-// 极简截图已启动
 static const wchar_t W_INFO_TITLE[] = { 0x6781, 0x7B80, 0x622A, 0x56FE, 0x5DF2, 0x542F, 0x52A8, 0x0000 }; 
-// 按 Ctrl+Shift+4 截图 \n 右键图标可退出
 static const wchar_t W_INFO_TEXT[] = { 0x6309, 0x0020, 0x0043, 0x0074, 0x0072, 0x006C, 0x002B, 0x0053, 0x0068, 0x0069, 0x0066, 0x0074, 0x002B, 0x0034, 0x0020, 0x622A, 0x56FE, 0x000A, 0x53F3, 0x952E, 0x56FE, 0x6807, 0x53EF, 0x9000, 0x51FA, 0x0000 }; 
-// 极简截图 by zsDili
 static const wchar_t W_ABOUT_TEXT[] = { 0x6781, 0x7B80, 0x622A, 0x56FE, 0x0020, 0x0062, 0x0079, 0x0020, 0x007A, 0x0073, 0x0044, 0x0069, 0x006C, 0x0069, 0x0000 }; 
-// ========================================================================
+
+// ================= 更新：还原图片的靶心图标 =================
+HICON CreateTargetIcon(int size, Color color) {
+    Bitmap bmp(size, size, PixelFormat32bppARGB);
+    Graphics g(&bmp);
+    g.SetSmoothingMode(SmoothingModeAntiAlias);
+    g.Clear(Color(0, 0, 0, 0)); // 完全透明背景
+
+    // 线宽随尺寸自适应，32px 时约为 2px 左右
+    float penWidth = size * 0.065f;
+    Pen pen(color, penWidth);
+    pen.SetStartCap(LineCapRound);
+    pen.SetEndCap(LineCapRound);
+
+    float c = size / 2.0f;
+    float r_out = size * 0.38f; // 大圆半径
+    float r_in = size * 0.15f;  // 小圆半径
+    float line_out = size * 0.1f; // 十字线外延长度
+    float line_in = size * 0.05f; // 十字线内缩长度(穿过大圆，不碰小圆)
+
+    // 画大圆
+    g.DrawEllipse(&pen, c - r_out, c - r_out, r_out * 2, r_out * 2);
+    // 画小圆
+    g.DrawEllipse(&pen, c - r_in, c - r_in, r_in * 2, r_in * 2);
+
+    // 画四个方向的线
+    // 上
+    g.DrawLine(&pen, c, c - r_out - line_out, c, c - r_in - line_in);
+    // 下
+    g.DrawLine(&pen, c, c + r_out + line_out, c, c + r_in + line_in);
+    // 左
+    g.DrawLine(&pen, c - r_out - line_out, c, c - r_in - line_in, c);
+    // 右
+    g.DrawLine(&pen, c + r_out + line_out, c, c + r_in + line_in, c);
+
+    HICON hIcon;
+    bmp.GetHICON(&hIcon);
+    return hIcon;
+}
+// =========================================================
 
 void DrawRoundRect(Graphics& g, Pen* pen, RectF rect, float radius) {
     GraphicsPath path;
@@ -96,7 +152,6 @@ void DrawMacIcon(Graphics& g, int type, RectF rect, Color color) {
     pen.SetStartCap(LineCapRound);
     pen.SetEndCap(LineCapRound);
     pen.SetLineJoin(LineJoinRound);
-    
     float cx = rect.X + rect.Width / 2.0f;
     float cy = rect.Y + rect.Height / 2.0f;
     float s = 8.0f;
@@ -115,6 +170,20 @@ void DrawMacIcon(Graphics& g, int type, RectF rect, Color color) {
         break;
     case TOOL_LINE:
         g.DrawLine(&pen, cx - s, cy + s, cx + s, cy - s); 
+        break;
+    case TOOL_TEXT:
+        FontFamily ff(L"Segoe UI");
+        Font font(&ff, 14, FontStyleRegular, UnitPixel);
+        SolidBrush brush(color);
+        g.DrawString(L"T", -1, &font, PointF(cx - 6, cy - 9), &brush);
+        break;
+    case TOOL_COLOR:
+        {
+            SolidBrush cBrush(g_colors[g_colorIdx]);
+            g.FillEllipse(&cBrush, cx - s, cy - s, s*2, s*2);
+            Pen border(Color(255,255,255,255), 1.0f);
+            g.DrawEllipse(&border, cx - s, cy - s, s*2, s*2);
+        }
         break;
     case TOOL_UNDO: {
         g.DrawArc(&pen, cx - s, cy - s*0.6f, s*1.8f, s*1.8f, 180.0f, 270.0f);
@@ -136,13 +205,15 @@ void DrawMacIcon(Graphics& g, int type, RectF rect, Color color) {
 void draw_toolbar(Graphics& g) {
     int totalW = BTN_COUNT * BTN_SIZE + (BTN_COUNT - 1) * BTN_GAP + 32;
     int startX = (g_screenW - totalW) / 2;
-    int startY = g_screenH - 80;
     
+    int startY = g_selRect.bottom + 15;
+    if (startY + 56 > g_screenH) startY = g_selRect.top - 56 - 15;
+    if (startY < 0) startY = 15; 
+
     RectF bgRect((float)startX, (float)startY, (float)totalW, 56.0f);
-    
-    SolidBrush bgBrush(Color(220, 30, 30, 30));
+    SolidBrush bgBrush(Color(230, 30, 30, 30));
     FillRoundRect(g, &bgBrush, bgRect, 28.0f); 
-    Pen borderPen(Color(40, 255, 255, 255), 1.0f);
+    Pen borderPen(Color(60, 255, 255, 255), 1.0f);
     DrawRoundRect(g, &borderPen, bgRect, 28.0f); 
 
     for (int i = 0; i < (int)BTN_COUNT; i++) {
@@ -153,20 +224,16 @@ void draw_toolbar(Graphics& g) {
             FillRoundRect(g, &hoverBrush, btnRect, 8.0f); 
         }
 
-        Color iconColor;
-        if (i < 4) {
-            iconColor = (i == g_tool) ? Color(255, 80, 160, 255) : Color(255, 230, 230, 230);
-        } else if (i == 5) {
-            iconColor = Color(255, 80, 200, 120);
-        } else {
-            iconColor = Color(255, 230, 230, 230);
-        }
+        Color iconColor = Color(255, 230, 230, 230);
+        if (i < 5 && i == g_tool) iconColor = Color(255, 80, 160, 255);
+        if (i == 7) iconColor = Color(255, 80, 200, 120);
+
         DrawMacIcon(g, g_btns[i], btnRect, iconColor);
     }
 }
 
 void draw_shape(Graphics& g, const Shape* s) {
-    Pen pen(Color(255, 255, 60, 60), 2.0f);
+    Pen pen(s->color, 2.0f);
     pen.SetStartCap(LineCapRound);
     pen.SetEndCap(LineCapRound);
     
@@ -183,6 +250,13 @@ void draw_shape(Graphics& g, const Shape* s) {
         }
         break;
     }
+    case TOOL_TEXT: {
+        FontFamily ff(L"Microsoft YaHei");
+        Font font(&ff, 18, FontStyleRegular, UnitPixel);
+        SolidBrush brush(s->color);
+        g.DrawString(s->text, -1, &font, PointF((REAL)s->a.X, (REAL)s->a.Y), &brush);
+        break;
+    }
     }
 }
 
@@ -193,7 +267,7 @@ void update_static_layer() {
     for (int i = 0; i < g_shapeCount; i++) draw_shape(g, &g_shapes[i]);
 }
 
-void save_png(HBITMAP hBmp) {
+void save_png(HBITMAP hBmp, int w, int h) {
     char desktop[MAX_PATH] = "C:\\";
     SHGetSpecialFolderPathA(NULL, desktop, CSIDL_DESKTOPDIRECTORY, FALSE);
     SYSTEMTIME st; GetLocalTime(&st);
@@ -202,6 +276,10 @@ void save_png(HBITMAP hBmp) {
     WCHAR wpath[MAX_PATH]; MultiByteToWideChar(CP_ACP, 0, path, -1, wpath, MAX_PATH);
     
     Bitmap bmp(hBmp, NULL);
+    Bitmap cropped(w, h, PixelFormat32bppARGB);
+    Graphics g(&cropped);
+    g.DrawImage(&bmp, 0, 0, g_selRect.left, g_selRect.top, w, h, UnitPixel);
+
     CLSID clsid;
     UINT num = 0, size = 0;
     GetImageEncodersSize(&num, &size);
@@ -211,25 +289,22 @@ void save_png(HBITMAP hBmp) {
         if (wcscmp(pInfo[j].MimeType, L"image/png") == 0) { clsid = pInfo[j].Clsid; break; }
     }
     free(pInfo);
-    bmp.Save(wpath, &clsid, NULL);
+    cropped.Save(wpath, &clsid, NULL);
 }
 
 void save_and_copy() {
     if (!g_staticDC) return;
+    int w = g_selRect.right - g_selRect.left;
+    int h = g_selRect.bottom - g_selRect.top;
+    if (w <= 0 || h <= 0) return;
+
     HDC hdc = GetDC(NULL);
-    HBITMAP hOut = CreateCompatibleBitmap(hdc, g_screenW, g_screenH);
+    HBITMAP hOut = CreateCompatibleBitmap(hdc, w, h);
     HDC hMem = CreateCompatibleDC(hdc);
     SelectObject(hMem, hOut);
-    BitBlt(hMem, 0, 0, g_screenW, g_screenH, g_staticDC, 0, 0, SRCCOPY);
-    
-    if (g_dragging) {
-        Graphics g(hMem);
-        g.SetSmoothingMode(SmoothingModeAntiAlias);
-        Shape tmp = { g_tool, g_dragStart, g_dragEnd };
-        draw_shape(g, &tmp);
-    }
+    BitBlt(hMem, 0, 0, w, h, g_staticDC, g_selRect.left, g_selRect.top, SRCCOPY);
 
-    save_png(hOut);
+    save_png(hOut, w, h);
 
     if (OpenClipboard(g_editWnd)) {
         EmptyClipboard();
@@ -241,6 +316,7 @@ void save_and_copy() {
 }
 
 void close_editor() {
+    if (g_textBox) { DestroyWindow(g_textBox); g_textBox = NULL; }
     if (g_editWnd) { DestroyWindow(g_editWnd); g_editWnd = NULL; }
     if (g_screenBmp) { DeleteObject(g_screenBmp); g_screenBmp = NULL; }
     if (g_screenDC) { DeleteDC(g_screenDC); g_screenDC = NULL; }
@@ -264,26 +340,52 @@ void paint_edit(HWND hwnd) {
     HBITMAP hBuf = CreateCompatibleBitmap(hdc, g_screenW, g_screenH);
     HGDIOBJ oldBuf = SelectObject(hMem, hBuf);
 
-    BitBlt(hMem, 0, 0, g_screenW, g_screenH, g_staticDC, 0, 0, SRCCOPY);
+    BitBlt(hMem, 0, 0, g_screenW, g_screenH, g_screenDC, 0, 0, SRCCOPY);
 
     Graphics g(hMem);
     g.SetSmoothingMode(SmoothingModeAntiAlias);
 
-    if (g_dragging) {
-        Shape tmp = { g_tool, g_dragStart, g_dragEnd };
-        draw_shape(g, &tmp);
+    if (g_isSelecting) {
+        SolidBrush mask(Color(140, 0, 0, 0));
+        g.FillRectangle(&mask, 0, 0, g_screenW, g_screenH);
+
+        if (g_hasSelection && g_selRect.right > g_selRect.left) {
+            Region region(Rect(g_selRect.left, g_selRect.top, 
+                g_selRect.right - g_selRect.left, g_selRect.bottom - g_selRect.top));
+            g.ExcludeClip(&region);
+            g.FillRectangle(&mask, 0, 0, g_screenW, g_screenH);
+            g.ResetClip();
+
+            Pen pen(Color(255, 255, 60, 60), 2.0f);
+            g.DrawRectangle(&pen, g_selRect.left, g_selRect.top, 
+                g_selRect.right - g_selRect.left, g_selRect.bottom - g_selRect.top);
+            
+            WCHAR sizeText[64];
+            wsprintfW(sizeText, L"%d x %d", g_selRect.right - g_selRect.left, g_selRect.bottom - g_selRect.top);
+            FontFamily ff(L"Segoe UI");
+            Font font(&ff, 14, FontStyleRegular, UnitPixel);
+            SolidBrush white(Color(255, 255, 255, 255));
+            g.DrawString(sizeText, -1, &font, PointF((REAL)g_selRect.left, (REAL)g_selRect.top - 20), &white);
+        }
+    } else {
+        BitBlt(hMem, 0, 0, g_screenW, g_screenH, g_staticDC, 0, 0, SRCCOPY);
+
+        if (g_dragging && g_tool != TOOL_TEXT) {
+            Shape tmp = { g_tool, g_dragStart, g_dragEnd, g_colors[g_colorIdx], L"" };
+            draw_shape(g, &tmp);
+        }
+        draw_toolbar(g);
     }
 
-    draw_toolbar(g);
+    // 准星与放大镜
+    if (g_showMouse && !g_textBox) {
+        int magSize = 100;
+        int magX = g_mouseX + 30;
+        int magY = g_mouseY + 30;
+        if (magX + magSize > g_screenW) magX = g_mouseX - 30 - magSize;
+        if (magY + magSize > g_screenH) magY = g_mouseY - 30 - magSize;
 
-    if (g_showMouse) {
-        int magSize = 120;
-        int magX = g_mouseX + 24;
-        int magY = g_mouseY + 24;
-        if (magX + magSize > g_screenW) magX = g_mouseX - 24 - magSize;
-        if (magY + magSize > g_screenH) magY = g_mouseY - 24 - magSize;
-
-        int srcSize = magSize / 6;
+        int srcSize = magSize / 5; 
         int srcX = g_mouseX - srcSize / 2;
         int srcY = g_mouseY - srcSize / 2;
 
@@ -300,15 +402,30 @@ void paint_edit(HWND hwnd) {
         
         Pen borderPen(Color(255, 255, 255, 255), 2.0f);
         g.DrawEllipse(&borderPen, magX, magY, magSize, magSize);
-        
         int cx = magX + magSize / 2, cy = magY + magSize / 2;
         Pen crossPen(Color(255, 255, 60, 60), 1.0f);
         g.DrawLine(&crossPen, cx - 10, cy, cx + 10, cy);
         g.DrawLine(&crossPen, cx, cy - 10, cx, cy + 10);
 
-        Pen screenCrossPen(Color(200, 0, 255, 255), 1.0f);
-        g.DrawLine(&screenCrossPen, g_mouseX, 0, g_mouseX, g_screenH);
-        g.DrawLine(&screenCrossPen, 0, g_mouseY, g_screenW, g_mouseY);
+        int cSize = 10;
+        Pen screenCrossPen(Color(255, 0, 255, 255), 1.0f);
+        g.DrawLine(&screenCrossPen, g_mouseX - cSize, g_mouseY, g_mouseX + cSize, g_mouseY);
+        g.DrawLine(&screenCrossPen, g_mouseX, g_mouseY - cSize, g_mouseX, g_mouseY + cSize);
+
+        WCHAR coordText[64];
+        swprintf_s(coordText, L"X:%d, Y:%d", g_mouseX, g_mouseY);
+        FontFamily ff(L"Consolas");
+        Font font(&ff, 13, FontStyleRegular, UnitPixel);
+        SolidBrush textBrush(Color(255, 0, 255, 255));
+        
+        int textX = g_mouseX + 16;
+        int textY = g_mouseY + 12;
+        if (textX + 80 > g_screenW) textX = g_mouseX - 95;
+        if (textY + 20 > g_screenH) textY = g_mouseY - 25;
+
+        SolidBrush bgBrush(Color(180, 0, 0, 0));
+        g.FillRectangle(&bgBrush, textX - 2, textY - 2, 76, 18);
+        g.DrawString(coordText, -1, &font, PointF((REAL)textX, (REAL)textY), &textBrush);
     }
 
     BitBlt(hdc, 0, 0, g_screenW, g_screenH, hMem, 0, 0, SRCCOPY);
@@ -318,9 +435,13 @@ void paint_edit(HWND hwnd) {
 }
 
 int GetHoverBtn(int x, int y) {
+    if (g_isSelecting) return -1;
     int totalW = BTN_COUNT * BTN_SIZE + (BTN_COUNT - 1) * BTN_GAP + 32;
     int startX = (g_screenW - totalW) / 2;
-    int startY = g_screenH - 80;
+    int startY = g_selRect.bottom + 15;
+    if (startY + 56 > g_screenH) startY = g_selRect.top - 56 - 15;
+    if (startY < 0) startY = 15;
+
     if (y >= startY + 10 && y <= startY + 10 + BTN_SIZE) {
         for (int i = 0; i < (int)BTN_COUNT; i++) {
             int bx = startX + 16 + i * (BTN_SIZE + BTN_GAP);
@@ -334,11 +455,24 @@ LRESULT CALLBACK EditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     switch (msg) {
     case WM_PAINT: paint_edit(hwnd); return 0;
     case WM_ERASEBKGND: return 1;
-    case WM_SETCURSOR: SetCursor(LoadCursor(NULL, IDC_ARROW)); return TRUE;
+    case WM_SETCURSOR: 
+        if (g_isSelecting || g_tool == TOOL_TEXT) SetCursor(LoadCursor(NULL, IDC_CROSS)); 
+        else SetCursor(LoadCursor(NULL, IDC_ARROW)); 
+        return TRUE;
 
     case WM_MOUSEMOVE: {
         g_mouseX = GET_X_LPARAM(lParam); g_mouseY = GET_Y_LPARAM(lParam);
-        if (g_dragging) { g_dragEnd.X = g_mouseX; g_dragEnd.Y = g_mouseY; }
+        if (g_isSelecting && g_dragging) {
+            g_selEnd.X = g_mouseX; g_selEnd.Y = g_mouseY;
+            g_selRect.left = std::min(g_selStart.X, g_selEnd.X);
+            g_selRect.top = std::min(g_selStart.Y, g_selEnd.Y);
+            g_selRect.right = std::max(g_selStart.X, g_selEnd.X);
+            g_selRect.bottom = std::max(g_selStart.Y, g_selEnd.Y);
+            g_hasSelection = TRUE;
+        } else if (!g_isSelecting && g_dragging && g_tool != TOOL_TEXT) {
+            g_dragEnd.X = g_mouseX; g_dragEnd.Y = g_mouseY;
+        }
+        
         int hover = GetHoverBtn(g_mouseX, g_mouseY);
         if (hover != g_hoverBtn) g_hoverBtn = hover;
         InvalidateRect(hwnd, NULL, FALSE); 
@@ -347,21 +481,57 @@ LRESULT CALLBACK EditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_LBUTTONDOWN: {
         int x = GET_X_LPARAM(lParam), y = GET_Y_LPARAM(lParam);
+        if (g_isSelecting) {
+            SetCapture(hwnd); g_dragging = TRUE;
+            g_selStart.X = x; g_selStart.Y = y; g_selEnd = g_selStart;
+            g_hasSelection = FALSE;
+            return 0;
+        }
+
         int btn = GetHoverBtn(x, y);
         if (btn != -1) {
             if (btn < 4) { g_tool = btn; }
-            else if (btn == 4) { if (g_shapeCount > 0) { g_shapeCount--; update_static_layer(); } }
-            else if (btn == 5) { save_and_close(); return 0; }
-            else if (btn == 6) { close_editor(); return 0; }
+            else if (btn == 4) { g_tool = TOOL_TEXT; }
+            else if (btn == 5) { 
+                g_colorIdx = (g_colorIdx + 1) % (sizeof(g_colors) / sizeof(g_colors[0]));
+            }
+            else if (btn == 6) { if (g_shapeCount > 0) { g_shapeCount--; update_static_layer(); } }
+            else if (btn == 7) { save_and_close(); return 0; }
+            else if (btn == 8) { close_editor(); return 0; }
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
-        SetCapture(hwnd); g_dragging = TRUE;
-        g_dragStart.X = x; g_dragStart.Y = y; g_dragEnd = g_dragStart;
+
+        if (g_tool == TOOL_TEXT) {
+            g_textBox = CreateWindowExW(WS_EX_TOPMOST, L"EDIT", L"", 
+                WS_POPUP | WS_BORDER | ES_LEFT | ES_AUTOHSCROLL, 
+                x, y, 250, 30, hwnd, NULL, (HINSTANCE)GetWindowLongPtr(hwnd, GWLP_HINSTANCE), NULL);
+            SendMessage(g_textBox, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
+            ShowWindow(g_textBox, SW_SHOW);
+            SetFocus(g_textBox);
+            return 0;
+        }
+
+        if (x >= g_selRect.left && x <= g_selRect.right && y >= g_selRect.top && y <= g_selRect.bottom) {
+            SetCapture(hwnd); g_dragging = TRUE;
+            g_dragStart.X = x; g_dragStart.Y = y; g_dragEnd = g_dragStart;
+        }
         return 0;
     }
 
     case WM_LBUTTONUP: {
+        if (g_isSelecting) {
+            if (g_dragging) {
+                ReleaseCapture(); g_dragging = FALSE;
+                if (g_hasSelection && (g_selRect.right - g_selRect.left > 10) && (g_selRect.bottom - g_selRect.top > 10)) {
+                    g_isSelecting = FALSE;
+                    update_static_layer();
+                }
+            }
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
+        }
+
         if (g_dragging) {
             ReleaseCapture(); g_dragging = FALSE;
             if (abs(g_dragEnd.X - g_dragStart.X) > 3 || abs(g_dragEnd.Y - g_dragStart.Y) > 3) {
@@ -369,6 +539,7 @@ LRESULT CALLBACK EditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     g_shapes[g_shapeCount].type = g_tool;
                     g_shapes[g_shapeCount].a = g_dragStart;
                     g_shapes[g_shapeCount].b = g_dragEnd;
+                    g_shapes[g_shapeCount].color = g_colors[g_colorIdx];
                     g_shapeCount++; update_static_layer();
                 }
             }
@@ -378,18 +549,58 @@ LRESULT CALLBACK EditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_KEYDOWN: {
-        if (wParam == VK_RETURN) { save_and_close(); return 0; }
+        if (g_textBox) return 0; 
+        
+        if (wParam == VK_RETURN) { 
+            if (g_isSelecting) {
+                g_selRect.left = 0; g_selRect.top = 0;
+                g_selRect.right = g_screenW; g_selRect.bottom = g_screenH;
+                g_isSelecting = FALSE; update_static_layer(); InvalidateRect(hwnd, NULL, FALSE);
+            } else {
+                save_and_close(); 
+            }
+            return 0; 
+        }
         if (wParam == VK_ESCAPE) { close_editor(); return 0; }
-        if (wParam >= '1' && wParam <= '4') { g_tool = wParam - '1'; InvalidateRect(hwnd, NULL, FALSE); return 0; }
-        if ((wParam == 'Z' || wParam == 'z') && (GetKeyState(VK_CONTROL) & 0x8000)) {
-            if (g_shapeCount > 0) { g_shapeCount--; update_static_layer(); }
-            InvalidateRect(hwnd, NULL, FALSE); return 0;
+        if (!g_isSelecting) {
+            if (wParam >= '1' && wParam <= '4') { g_tool = wParam - '1'; InvalidateRect(hwnd, NULL, FALSE); return 0; }
+            if ((wParam == 'Z' || wParam == 'z') && (GetKeyState(VK_CONTROL) & 0x8000)) {
+                if (g_shapeCount > 0) { g_shapeCount--; update_static_layer(); }
+                InvalidateRect(hwnd, NULL, FALSE); return 0;
+            }
         }
         return 0;
     }
     case WM_CLOSE: close_editor(); return 0;
     }
     return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+LRESULT CALLBACK TextBoxProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    if (msg == WM_KEYDOWN && wParam == VK_RETURN) {
+        WCHAR text[256];
+        GetWindowTextW(hwnd, text, 256);
+        if (lstrlenW(text) > 0 && g_shapeCount < MAX_SHAPES) {
+            RECT rc; GetWindowRect(hwnd, &rc);
+            POINT pt = { rc.left, rc.top };
+            ScreenToClient(g_editWnd, &pt);
+
+            g_shapes[g_shapeCount].type = TOOL_TEXT;
+            g_shapes[g_shapeCount].a = pt;
+            g_shapes[g_shapeCount].color = g_colors[g_colorIdx];
+            wcscpy_s(g_shapes[g_shapeCount].text, text);
+            g_shapeCount++; update_static_layer();
+        }
+        DestroyWindow(hwnd); g_textBox = NULL;
+        InvalidateRect(g_editWnd, NULL, FALSE);
+        return 0;
+    }
+    if (msg == WM_KILLFOCUS) {
+        DestroyWindow(hwnd); g_textBox = NULL;
+        InvalidateRect(g_editWnd, NULL, FALSE);
+        return 0;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
 void begin_capture() {
@@ -408,12 +619,12 @@ void begin_capture() {
     SelectObject(g_staticDC, g_staticBmp);
     
     g_screenGpBmp = Bitmap::FromHBITMAP(g_screenBmp, NULL);
-
     ReleaseDC(NULL, hScreen);
 
     g_shapeCount = 0; g_dragging = FALSE; g_tool = TOOL_ARROW; g_showMouse = TRUE; g_hoverBtn = -1;
+    g_isSelecting = TRUE; g_hasSelection = FALSE; g_textBox = NULL;
+    g_selRect = {0, 0, 0, 0};
     while(ShowCursor(FALSE) >= 0);
-    update_static_layer();
 
     HINSTANCE hInst = (HINSTANCE)GetModuleHandleA(NULL);
     g_editWnd = CreateWindowExA(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "ShotEditCls", "Screenshot", WS_POPUP, 0, 0, g_screenW, g_screenH, NULL, NULL, hInst, NULL);
@@ -423,43 +634,16 @@ void begin_capture() {
     InvalidateRect(g_editWnd, NULL, FALSE);
 }
 
-HICON CreateTargetIcon(int size, Color color) {
-    Bitmap bmp(size, size, PixelFormat32bppARGB);
-    Graphics g(&bmp);
-    g.SetSmoothingMode(SmoothingModeAntiAlias);
-    g.Clear(Color(0, 0, 0, 0));
-    
-    Pen pen(color, 2.0f);
-    float c = size / 2.0f;
-    float r = size / 4.0f;
-    g.DrawEllipse(&pen, c - r, c - r, r * 2, r * 2);
-    
-    pen.SetWidth(1.5f);
-    g.DrawLine(&pen, c, 0.0f, c, c - r - 2);
-    g.DrawLine(&pen, c, c + r + 2, c, (float)size);
-    g.DrawLine(&pen, 0.0f, c, c - r - 2, c);
-    g.DrawLine(&pen, c + r + 2, c, (float)size, c);
-    
-    HICON hIcon;
-    bmp.GetHICON(&hIcon);
-    return hIcon;
-}
-
 void init_tray(HWND hwnd) {
-    g_trayIcon = CreateTargetIcon(32, Color(255, 255, 80, 80));
-    g_nid.cbSize = sizeof(NOTIFYICONDATAW); 
-    g_nid.hWnd = hwnd; 
-    g_nid.uID = 1;
+    // 托盘使用黑色线条的透明图标
+    g_trayIcon = CreateTargetIcon(32, Color(255, 0, 0, 0));
+    g_nid.cbSize = sizeof(NOTIFYICONDATAW); g_nid.hWnd = hwnd; g_nid.uID = 1;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_INFO;
-    g_nid.uCallbackMessage = WM_TRAYICON; 
-    g_nid.hIcon = g_trayIcon;
-    
-    // 使用完全硬编码的字符数组，物理防乱码
+    g_nid.uCallbackMessage = WM_TRAYICON; g_nid.hIcon = g_trayIcon;
     wcscpy_s(g_nid.szTip, W_TIP);
     g_nid.dwInfoFlags = NIIF_INFO;
     wcscpy_s(g_nid.szInfoTitle, W_INFO_TITLE);
     wcscpy_s(g_nid.szInfo, W_INFO_TEXT);
-    
     Shell_NotifyIconW(NIM_ADD, &g_nid);
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 }
@@ -469,22 +653,17 @@ LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == WM_TRAYICON && lParam == WM_RBUTTONUP) {
         POINT pt; GetCursorPos(&pt);
         HMENU hMenu = CreatePopupMenu();
-        
         AppendMenuW(hMenu, MF_STRING, 1001, W_ABOUT);
         AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(hMenu, MF_STRING, 1002, W_EXIT);
-        
         SetForegroundWindow(hwnd);
         int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
         DestroyMenu(hMenu);
-        
-        if (cmd == 1001) {
-            MessageBoxW(NULL, W_ABOUT_TEXT, W_ABOUT, MB_OK | MB_ICONINFORMATION);
-        } else if (cmd == 1002) {
+        if (cmd == 1001) MessageBoxW(NULL, W_ABOUT_TEXT, W_ABOUT, MB_OK | MB_ICONINFORMATION);
+        else if (cmd == 1002) {
             HANDLE hEvent = OpenEventA(EVENT_MODIFY_STATE, FALSE, "TinyShotQuitEvent");
             if (hEvent) { SetEvent(hEvent); CloseHandle(hEvent); }
-            Shell_NotifyIconW(NIM_DELETE, &g_nid); 
-            DestroyIcon(g_trayIcon);
+            Shell_NotifyIconW(NIM_DELETE, &g_nid); DestroyIcon(g_trayIcon);
             PostQuitMessage(0);
         }
         return 0;
@@ -546,7 +725,7 @@ static int run_message_loop() {
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow) {
     if (cmdLine && strstr(cmdLine, "--watchdog")) return watchdog_main();
     SetUnhandledExceptionFilter(TopLevelFilter);
-    HANDLE hMutex = CreateMutexA(NULL, TRUE, "TinyShotMutex_v5");
+    HANDLE hMutex = CreateMutexA(NULL, TRUE, "TinyShotMutex_v7");
     if (hMutex && GetLastError() == ERROR_ALREADY_EXISTS) { CloseHandle(hMutex); return 0; }
     if (!cmdLine || !strstr(cmdLine, "--noguard")) start_watchdog();
     
@@ -562,6 +741,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow) {
 
     g_msgWnd = CreateWindowExA(0, "TinyShotMsgCls", "", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, hInst, NULL);
     if (!g_msgWnd) { GdiplusShutdown(g_gdiplusToken); return 1; }
+
+    // ================= 设置任务栏和窗口图标 =================
+    HICON appIconLarge = CreateTargetIcon(32, Color(255, 0, 0, 0));
+    HICON appIconSmall = CreateTargetIcon(16, Color(255, 0, 0, 0));
+    SendMessage(g_msgWnd, WM_SETICON, ICON_BIG, (LPARAM)appIconLarge);
+    SendMessage(g_msgWnd, WM_SETICON, ICON_SMALL, (LPARAM)appIconSmall);
+    // ========================================================
 
     if (!RegisterHotKey(g_msgWnd, HOTKEY_ID, MOD_CONTROL | MOD_SHIFT, '4')) {
         MessageBoxW(NULL, L"Ctrl+Shift+4 register failed.", L"TinyShot", MB_ICONERROR);
